@@ -1,0 +1,430 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>레트로 점프</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="theme-color" content="#0b0714">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<style>
+  :root{
+    --bg:#0b0714; --bezel:#171024; --bezel-line:#35244f;
+    --ink:#efe6ff; --dim:#9a86c0;
+    --coral:#ff6d64; --mint:#7ef0c2; --gold:#ffd75c; --plum:#6e3b8f;
+    --mono:ui-monospace,"SFMono-Regular",Menlo,Consolas,"Liberation Mono",monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px;
+    background:radial-gradient(120% 90% at 50% 30%, #150d26 0%, var(--bg) 60%, #060309 100%);
+    color:var(--ink); font-family:var(--mono);
+  }
+  .marquee{
+    font-size:11px; letter-spacing:.34em; color:var(--dim); text-transform:uppercase;
+  }
+  .marquee b{color:var(--gold); font-weight:700}
+  .cab{
+    padding:12px 12px 16px; background:var(--bezel);
+    border:1px solid var(--bezel-line); border-radius:12px;
+    box-shadow:0 0 0 1px #000, 0 24px 60px rgba(0,0,0,.65), 0 0 90px rgba(255,109,100,.07);
+  }
+  .screen{
+    position:relative; line-height:0; border-radius:4px; overflow:hidden;
+    touch-action:none; user-select:none; -webkit-user-select:none; cursor:pointer;
+    background:#000;
+  }
+  canvas{
+    display:block; width:min(92vw,704px); height:auto;
+    image-rendering:pixelated; image-rendering:crisp-edges;
+  }
+  /* CRT scanlines + vignette */
+  .screen::after{
+    content:""; position:absolute; inset:0; pointer-events:none;
+    background:repeating-linear-gradient(0deg, rgba(0,0,0,.22) 0 1px, transparent 1px 3px);
+  }
+  .screen::before{
+    content:""; position:absolute; inset:0; pointer-events:none; z-index:1;
+    background:radial-gradient(115% 100% at 50% 45%, transparent 62%, rgba(5,2,10,.55) 100%);
+  }
+  .hud{
+    position:absolute; top:0; left:0; right:0; z-index:2; pointer-events:none;
+    display:flex; justify-content:space-between; padding:8px 12px;
+    font-size:clamp(10px,2.2vw,14px); font-weight:700; letter-spacing:.14em; line-height:1;
+    color:var(--ink); text-shadow:0 0 8px rgba(255,215,92,.45), 1px 1px 0 #000;
+    font-variant-numeric:tabular-nums;
+  }
+  .hud .best{color:var(--gold)}
+  .overlay{
+    position:absolute; inset:0; z-index:2; pointer-events:none;
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px;
+    background:rgba(10,6,18,.55); text-align:center; line-height:1.35;
+  }
+  .overlay.hide{display:none}
+  .t1{
+    font-size:clamp(26px,7vw,46px); font-weight:800; letter-spacing:.1em; color:var(--gold);
+    text-shadow:2px 2px 0 var(--coral), 4px 4px 0 var(--plum), 0 0 24px rgba(255,109,100,.35);
+  }
+  .t2{font-size:clamp(11px,2.6vw,15px); letter-spacing:.5em; color:var(--mint); margin-left:.5em}
+  .prompt{font-size:clamp(10px,2.4vw,14px); color:var(--ink)}
+  .hint{font-size:clamp(9px,2.2vw,12px); color:var(--dim)}
+  .press{
+    margin-top:6px; font-size:clamp(10px,2.4vw,14px); font-weight:700; letter-spacing:.22em;
+    color:var(--coral); text-shadow:0 0 10px rgba(255,109,100,.6);
+    animation:blink 1s steps(2,end) infinite;
+  }
+  .result{font-size:clamp(12px,3vw,18px); font-weight:700; color:var(--ink)}
+  .result .n{color:var(--gold)}
+  .newbest{font-size:clamp(10px,2.4vw,13px); color:var(--mint); letter-spacing:.2em}
+  @keyframes blink{50%{opacity:0}}
+  @media (prefers-reduced-motion:reduce){.press{animation:none}}
+  .keys{font-size:11px; letter-spacing:.18em; color:var(--dim)}
+  .keys kbd{
+    display:inline-block; padding:2px 7px; margin:0 2px; border:1px solid var(--bezel-line);
+    border-bottom-width:3px; border-radius:4px; background:#1e1530; color:var(--ink); font-family:inherit;
+  }
+</style>
+</head>
+<body>
+  <div class="marquee">1 BUTTON · <b>RETRO JUMP</b> · ARCADE</div>
+  <div class="cab">
+    <div class="screen" id="screen">
+      <canvas id="game" width="320" height="180"></canvas>
+      <div class="hud"><span id="score">SCORE 000000</span><span class="best" id="best">BEST 000000</span></div>
+      <div class="overlay" id="overlay"></div>
+    </div>
+  </div>
+  <div class="keys"><kbd>SPACE</kbd><kbd>↑</kbd><kbd>TAP</kbd> 점프 — 길게 누르면 더 높이! · <kbd>M</kbd> 음악 켜기/끄기</div>
+
+<script>
+(() => {
+"use strict";
+const W = 320, H = 180, STEP = 1000/60;
+const cvs = document.getElementById("game");
+const ctx = cvs.getContext("2d");
+ctx.imageSmoothingEnabled = false;
+const scoreEl = document.getElementById("score");
+const bestEl  = document.getElementById("best");
+const overlay = document.getElementById("overlay");
+const screen  = document.getElementById("screen");
+
+const LEVELS = [152, 134, 116];            // 발판 윗면 y (아래/중간/위)
+const COL = {
+  sky:["#120c24","#180f30","#20143c","#2a1a4a","#361f56","#432763"],
+  mtnFar:"#33205a", mtnNear:"#22123f",
+  sun:"#ffb84d", sunLo:"#ff7a4d",
+  platTop:"#ff6d64", platEdge:"#ffc9a3", platUnder:"#a63b52", platBody:"#241a33", platDot:"#342449",
+  player:"#7ef0c2", playerDark:"#2e8a68", eye:"#10241c",
+  coin:"#ffd75c", coinDark:"#c99117",
+  dust:"#cfc2e8"
+};
+
+let state = "title";                       // title | play | dead
+let best = +(localStorage.getItem("retro-jump-best") || 0);
+const world = { speed:0, dist:0, score:0, t:0, deadT:0 };
+const P = { x:60, y:0, w:9, h:12, vy:0, ground:false, coyote:0, buffer:0, hold:false, anim:0 };
+let plats = [], coins = [], parts = [];
+
+// ---------- 사운드 (WebAudio 비프음) ----------
+let AC = null;
+function audio(){ if(!AC){ try{ AC = new (window.AudioContext||window.webkitAudioContext)(); }catch(e){} } return AC; }
+function beep(f0, f1, dur, type, vol){
+  const ac = audio(); if(!ac) return;
+  const o = ac.createOscillator(), g = ac.createGain(), t = ac.currentTime;
+  o.type = type; o.frequency.setValueAtTime(f0, t);
+  o.frequency.exponentialRampToValueAtTime(Math.max(f1,1), t+dur);
+  g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.001, t+dur);
+  o.connect(g); g.connect(ac.destination); o.start(t); o.stop(t+dur);
+}
+const sJump = () => beep(340, 720, .14, "square", .05);
+const sCoin = () => beep(920, 1560, .10, "square", .05);
+const sDie  = () => beep(240, 50,  .45, "sawtooth", .07);
+
+// ---------- 배경 음악 (칩튠 시퀀서, Am-F-C-G 루프) ----------
+const MUSIC = (() => {
+  const BPM = 116;
+  const PROG = [45, 41, 48, 43];                 // 마디별 근음: A2 F2 C3 G2
+  const BASS = [0, 12, 7, 0, 12, 0, 7, 12];      // 근음 기준 옥타브/5도 펌핑
+  const LEAD = [                                  // 8분음표 32스텝 멜로디 (0=쉼표)
+    69,  0, 72, 74, 76,  0, 74, 72,
+    69, 72,  0, 69, 65,  0, 69, 72,
+    76,  0, 72, 76, 79,  0, 76, 74,
+    74, 71, 67,  0, 71,  0, 74,  0
+  ];
+  let gain = null, timer = null, step = 0, nextT = 0, muted = false;
+  const hz = m => 440 * Math.pow(2, (m - 69) / 12);
+  function note(t, midi, dur, type, vol){
+    const o = AC.createOscillator(), g = AC.createGain();
+    o.type = type; o.frequency.setValueAtTime(hz(midi), t);
+    g.gain.setValueAtTime(vol, t);
+    g.gain.setValueAtTime(vol, t + dur - 0.03);
+    g.gain.linearRampToValueAtTime(0.0001, t + dur);
+    o.connect(g); g.connect(gain); o.start(t); o.stop(t + dur);
+  }
+  function tick(){
+    const spb = 60 / BPM / 2;                     // 8분음표 길이(초)
+    while (nextT < AC.currentTime + 0.25){        // 0.25초 미리 스케줄
+      const i = step % 32, bar = (i / 8) | 0, root = PROG[bar];
+      note(nextT, root + BASS[i % 8], spb * 0.9, "triangle", 0.085);
+      if (LEAD[i]) note(nextT, LEAD[i], spb * 0.95, "square", 0.028);
+      nextT += spb; step++;
+    }
+  }
+  return {
+    start(){
+      const ac = audio(); if (!ac || timer) return;
+      if (!gain){ gain = ac.createGain(); gain.connect(ac.destination); }
+      gain.gain.value = muted ? 0 : 1;
+      step = 0; nextT = ac.currentTime + 0.1;
+      tick(); timer = setInterval(tick, 80);
+    },
+    stop(){ if (timer){ clearInterval(timer); timer = null; } },
+    toggleMute(){ muted = !muted; if (gain) gain.gain.value = muted ? 0 : 1; }
+  };
+})();
+document.addEventListener("visibilitychange", () => {   // 탭 전환 시 음악도 일시정지
+  if (document.hidden) MUSIC.stop();
+  else if (state === "play") MUSIC.start();
+});
+
+// ---------- 월드 생성 ----------
+function spawnPlat(){
+  const last = plats[plats.length-1];
+  const s = world.speed;
+  let li = last.li + (Math.random()<0.45 ? 0 : (Math.random()<0.5 ? 1 : -1));
+  li = Math.max(0, Math.min(2, li));
+  let gap = 26 + Math.random()*Math.min(60, s*13);
+  if (li > last.li) gap = Math.min(gap, 18 + s*8);   // 올라가는 점프는 짧게
+  const w = 64 + Math.random()*96;
+  const p = { x:last.x + last.w + gap, y:LEVELS[li], w, li };
+  plats.push(p);
+  if (Math.random() < 0.55){
+    const n = 3, cx = p.x + p.w/2 - (n-1)*6;
+    for (let i=0;i<n;i++) coins.push({ x:cx + i*12, y:p.y - 20, t:i*3, dead:false });
+  }
+}
+function reset(){
+  world.speed = 1.7; world.dist = 0; world.score = 0; world.t = 0; world.deadT = 0;
+  plats = [{ x:-20, y:LEVELS[0], w:300, li:0 }];
+  coins = []; parts = [];
+  P.x = 60; P.y = LEVELS[0]-P.h; P.vy = 0; P.ground = true; P.coyote = 0; P.buffer = 0;
+  while (plats[plats.length-1].x + plats[plats.length-1].w < W + 80) spawnPlat();
+}
+
+// ---------- 입력 ----------
+function press(){
+  if (state === "title"){ state = "play"; reset(); showOverlay(); sJump(); MUSIC.start(); return; }
+  if (state === "dead"){ if (world.deadT > 30){ state = "play"; reset(); showOverlay(); MUSIC.start(); } return; }
+  P.buffer = 8; P.hold = true;
+}
+function release(){ P.hold = false; }
+addEventListener("keydown", e => {
+  if (e.code === "Space" || e.code === "ArrowUp"){ e.preventDefault(); if(!e.repeat) press(); }
+  if (e.code === "KeyM" && !e.repeat) MUSIC.toggleMute();
+});
+addEventListener("keyup", e => { if (e.code === "Space" || e.code === "ArrowUp") release(); });
+screen.addEventListener("pointerdown", e => { e.preventDefault(); press(); });
+addEventListener("pointerup", release);
+addEventListener("pointercancel", release);
+
+// ---------- 오버레이 UI ----------
+function fmt(n){ return String(n).padStart(6,"0"); }
+function showOverlay(){
+  if (state === "play"){ overlay.classList.add("hide"); return; }
+  overlay.classList.remove("hide");
+  if (state === "title"){
+    overlay.innerHTML =
+      '<div class="t1">RETRO JUMP</div>' +
+      '<div class="t2">레트로 점프</div>' +
+      '<div class="prompt">절벽을 뛰어넘고 코인을 모으세요</div>' +
+      '<div class="hint">길게 누르면 더 높이 점프합니다</div>' +
+      '<div class="press">PRESS SPACE / TAP</div>';
+  } else {
+    const nb = world.score >= best && world.score > 0;
+    overlay.innerHTML =
+      '<div class="t1" style="color:var(--coral);text-shadow:2px 2px 0 var(--plum),4px 4px 0 #1a0f2e">GAME OVER</div>' +
+      '<div class="result">SCORE <span class="n">' + fmt(world.score) + "</span></div>" +
+      (nb ? '<div class="newbest">★ NEW BEST ★</div>' : '<div class="hint">BEST ' + fmt(best) + "</div>") +
+      '<div class="press">다시 시작 — SPACE / TAP</div>';
+  }
+}
+
+// ---------- 업데이트 ----------
+function dust(x, y, n, up){
+  for (let i=0;i<n;i++) parts.push({
+    x:x + (Math.random()*8-4), y:y + (Math.random()*2-1),
+    vx:-0.5 - Math.random(), vy:(up ? -1 : -0.2) - Math.random()*0.8, life:14 + Math.random()*10
+  });
+}
+function update(){
+  world.t++;
+  if (state !== "play"){
+    if (state === "dead"){
+      world.deadT++;
+      P.vy = Math.min(P.vy + 0.5, 7); P.y += P.vy;   // 추락 연출
+    }
+    parts.forEach(q => { q.x += q.vx; q.y += q.vy; q.vy += 0.06; q.life--; });
+    parts = parts.filter(q => q.life > 0);
+    return;
+  }
+
+  world.speed = Math.min(4, world.speed + 0.00045);
+  world.dist += world.speed;
+  world.score = Math.floor(world.dist/10) + (world.coinScore|0);
+
+  // 스크롤
+  for (const p of plats) p.x -= world.speed;
+  for (const c of coins) c.x -= world.speed;
+  plats = plats.filter(p => p.x + p.w > -30);
+  coins = coins.filter(c => c.x > -20 && !c.dead);
+  while (plats[plats.length-1].x + plats[plats.length-1].w < W + 80) spawnPlat();
+
+  // 점프
+  if (P.buffer > 0) P.buffer--;
+  if (P.coyote > 0) P.coyote--;
+  if (P.buffer > 0 && (P.ground || P.coyote > 0)){
+    P.vy = -5.3; P.ground = false; P.coyote = 0; P.buffer = 0;
+    dust(P.x + 4, P.y + P.h, 5, true); sJump();
+  }
+
+  // 중력 (버튼 유지 시 상승 중 저중력)
+  P.vy = Math.min(P.vy + ((P.hold && P.vy < 0) ? 0.28 : 0.6), 7);
+  const prevBottom = P.y + P.h;
+  P.y += P.vy;
+
+  // 착지
+  const wasGround = P.ground;
+  P.ground = false;
+  for (const p of plats){
+    if (P.x + P.w > p.x + 1 && P.x < p.x + p.w - 1 &&
+        P.vy >= 0 && prevBottom <= p.y + 0.01 && P.y + P.h >= p.y){
+      P.y = p.y - P.h; P.vy = 0; P.ground = true;
+    }
+  }
+  if (P.ground){ P.coyote = 6; if (!wasGround) dust(P.x + 4, P.y + P.h, 6, false); }
+
+  // 벽 밀림
+  for (const p of plats){
+    if (P.y + P.h > p.y + 2 && P.x + P.w > p.x && P.x < p.x + p.w) P.x = p.x - P.w;
+  }
+  if (P.x < 60) P.x = Math.min(60, P.x + 0.35);
+
+  // 코인
+  for (const c of coins){
+    c.t++;
+    if (Math.abs((c.x) - (P.x + P.w/2)) < 8 && Math.abs(c.y - (P.y + P.h/2)) < 10){
+      c.dead = true; world.coinScore = (world.coinScore|0) + 50; sCoin();
+      for (let i=0;i<4;i++) parts.push({x:c.x, y:c.y, vx:Math.random()*2-1, vy:-Math.random()*1.5, life:12});
+    }
+  }
+
+  // 파티클
+  parts.forEach(q => { q.x += q.vx; q.y += q.vy; q.vy += 0.06; q.life--; });
+  parts = parts.filter(q => q.life > 0);
+
+  P.anim += world.speed * 0.15;
+
+  // 사망
+  if (P.y > H + 8 || P.x + P.w < 6){
+    state = "dead"; world.deadT = 0; MUSIC.stop(); sDie();
+    if (world.score > best){ best = world.score; localStorage.setItem("retro-jump-best", best); }
+    showOverlay();
+  }
+
+  scoreEl.textContent = "SCORE " + fmt(world.score);
+  bestEl.textContent  = "BEST "  + fmt(Math.max(best, world.score));
+}
+
+// ---------- 렌더 ----------
+function mtn(off, base, amp, color, colw){
+  ctx.fillStyle = color;
+  for (let sx = 0; sx < W; sx += colw){
+    const x = sx + off;
+    const h = amp*0.55*Math.sin(x*0.017) + amp*0.3*Math.sin(x*0.051+2) + amp*0.18*Math.sin(x*0.11+5);
+    const y = Math.round((base - Math.abs(h))/2)*2;
+    ctx.fillRect(sx, y, colw, H - y);
+  }
+}
+const stars = Array.from({length:42}, () => ({x:Math.random()*W, y:Math.random()*88, s:Math.random()<0.2?2:1, p:Math.random()*60|0}));
+function render(){
+  // 하늘
+  const bh = Math.ceil(H/COL.sky.length);
+  COL.sky.forEach((c,i) => { ctx.fillStyle = c; ctx.fillRect(0, i*bh, W, bh); });
+  // 별
+  for (const st of stars){
+    if (((world.t + st.p) % 90) < 70){ ctx.fillStyle = "#e8ddff"; ctx.fillRect(st.x|0, st.y|0, st.s, st.s); }
+  }
+  // 태양 (줄무늬)
+  ctx.fillStyle = COL.sun;
+  ctx.beginPath(); ctx.arc(250, 62, 26, 0, 7); ctx.fill();
+  ctx.fillStyle = COL.sunLo;
+  ctx.beginPath(); ctx.arc(250, 62, 26, 0, Math.PI); ctx.fill();
+  ctx.fillStyle = COL.sky[2];
+  for (let y = 64; y < 90; y += 5) ctx.fillRect(222, y, 56, 2);
+  // 산 (패럴랙스)
+  mtn(world.dist*0.18, 132, 52, COL.mtnFar, 4);
+  mtn(world.dist*0.42 + 900, 152, 40, COL.mtnNear, 3);
+
+  // 발판
+  for (const p of plats){
+    const x = Math.round(p.x), w = Math.round(p.w);
+    ctx.fillStyle = COL.platBody; ctx.fillRect(x, p.y, w, H - p.y);
+    ctx.fillStyle = COL.platDot;
+    for (let dy = p.y + 10; dy < H; dy += 8)
+      for (let dx = x + 4 + ((dy/8)%2)*4; dx < x + w - 3; dx += 8) ctx.fillRect(dx, dy, 2, 2);
+    ctx.fillStyle = COL.platUnder; ctx.fillRect(x, p.y + 3, w, 2);
+    ctx.fillStyle = COL.platTop;  ctx.fillRect(x, p.y, w, 3);
+    ctx.fillStyle = COL.platEdge; ctx.fillRect(x, p.y, 2, 3); ctx.fillRect(x + w - 2, p.y, 2, 3);
+  }
+
+  // 코인
+  for (const c of coins){
+    const ph = [6,4,2,4][ (c.t>>3) % 4 ];
+    const x = Math.round(c.x - ph/2), y = Math.round(c.y - 3);
+    ctx.fillStyle = COL.coin;     ctx.fillRect(x, y, ph, 6);
+    ctx.fillStyle = COL.coinDark; ctx.fillRect(x, y + 4, ph, 2);
+  }
+
+  // 플레이어
+  const px = Math.round(P.x), py = Math.round(P.y);
+  ctx.fillStyle = COL.playerDark;
+  if (P.ground){
+    const f = (P.anim|0) % 2;
+    ctx.fillRect(px + 1 + f*4, py + 8, 3, 4);
+    ctx.fillRect(px + 5 - f*4, py + 9, 3, 3);
+  } else {
+    ctx.fillRect(px + 1, py + 9, 3, 3); ctx.fillRect(px + 5, py + 8, 3, 3);
+  }
+  ctx.fillStyle = COL.player;    ctx.fillRect(px, py, 9, 9);
+  ctx.fillStyle = COL.playerDark;ctx.fillRect(px, py + 7, 9, 2);
+  ctx.fillStyle = COL.eye;       ctx.fillRect(px + 6, py + 3, 2, 2);
+  ctx.fillStyle = COL.coin; ctx.fillRect(px + 3, py - 2, 1, 2); ctx.fillRect(px + 2, py - 3, 3, 1);
+
+  // 파티클
+  ctx.fillStyle = COL.dust;
+  for (const q of parts) ctx.fillRect(q.x|0, q.y|0, 1, 1);
+}
+
+// ---------- 루프 ----------
+let acc = 0, last = performance.now();
+function loop(t){
+  acc += Math.min(t - last, 100); last = t;
+  while (acc >= STEP){ update(); acc -= STEP; }
+  render();
+  requestAnimationFrame(loop);
+}
+reset();
+state = "title";
+showOverlay();
+bestEl.textContent = "BEST " + fmt(best);
+requestAnimationFrame(loop);
+
+// PWA: HTTPS로 호스팅된 경우 서비스 워커 등록 (홈 화면 설치 + 오프라인 실행)
+if ("serviceWorker" in navigator && location.protocol === "https:")
+  navigator.serviceWorker.register("sw.js").catch(() => {});
+})();
+</script>
+</body>
+</html>
