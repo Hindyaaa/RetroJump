@@ -193,11 +193,12 @@ document.addEventListener("visibilitychange", () => {   // 탭 전환 시 음악
 function spawnPlat(){
   const last = plats[plats.length-1];
   const s = world.speed;
-  let li = last.li + (Math.random()<0.45 ? 0 : (Math.random()<0.5 ? 1 : -1));
+  const d = Math.min(1, world.dist / 2400);          // 난이도 0→1 (첫 ~25초 워밍업)
+  let li = last.li + (Math.random() < 0.7 - 0.25*d ? 0 : (Math.random()<0.5 ? 1 : -1));
   li = Math.max(0, Math.min(2, li));
-  let gap = 26 + Math.random()*Math.min(60, s*13);
-  if (li > last.li) gap = Math.min(gap, 18 + s*8);   // 올라가는 점프는 짧게
-  const w = 64 + Math.random()*96;
+  let gap = 16 + Math.random()*(12 + (14 + s*10)*d);
+  if (li > last.li) gap = Math.min(gap, 16 + (6 + s*7)*d);   // 올라가는 점프는 짧게
+  const w = 64 + Math.random()*96 + 70*(1 - d);      // 초반엔 발판 넓게
   const p = { x:last.x + last.w + gap, y:LEVELS[li], w, li };
   plats.push(p);
   if (Math.random() < 0.55){
@@ -206,7 +207,7 @@ function spawnPlat(){
   }
 }
 function reset(){
-  world.speed = 1.7; world.dist = 0; world.score = 0; world.t = 0; world.deadT = 0;
+  world.speed = 1.4; world.dist = 0; world.score = 0; world.t = 0; world.deadT = 0;
   plats = [{ x:-20, y:LEVELS[0], w:300, li:0 }];
   coins = []; parts = [];
   P.x = 60; P.y = LEVELS[0]-P.h; P.vy = 0; P.ground = true; P.coyote = 0; P.buffer = 0;
@@ -217,7 +218,7 @@ function reset(){
 function press(){
   if (state === "title"){ state = "play"; reset(); showOverlay(); sJump(); MUSIC.start(); return; }
   if (state === "dead"){ if (world.deadT > 30){ state = "play"; reset(); showOverlay(); MUSIC.start(); } return; }
-  P.buffer = 8; P.hold = true;
+  P.buffer = 10; P.hold = true;
 }
 function release(){ P.hold = false; }
 addEventListener("keydown", e => {
@@ -270,7 +271,7 @@ function update(){
     return;
   }
 
-  world.speed = Math.min(4, world.speed + 0.00045);
+  world.speed = Math.min(4, world.speed + 0.0004);
   world.dist += world.speed;
   world.score = Math.floor(world.dist/10) + (world.coinScore|0);
 
@@ -303,7 +304,7 @@ function update(){
       P.y = p.y - P.h; P.vy = 0; P.ground = true;
     }
   }
-  if (P.ground){ P.coyote = 6; if (!wasGround) dust(P.x + 4, P.y + P.h, 6, false); }
+  if (P.ground){ P.coyote = 9; if (!wasGround) dust(P.x + 4, P.y + P.h, 6, false); }
 
   // 벽 밀림
   for (const p of plats){
